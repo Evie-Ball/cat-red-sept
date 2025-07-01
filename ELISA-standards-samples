@@ -1,0 +1,155 @@
+# USE CTRL + SHIFT + ENTER TO RUN ENTIRE CODE. ENSURE DIRECTORIES (TWO) AND READ (ONE) 
+# ARE SET ACCORDINGLY.
+
+# This document is a work in progress, if you have any issues please contact either myself
+# (ASK LAB/INSERTGITHUB) or anyone with more knowledge on this than myself.
+
+# THIS USES THE CAYMAN CHEMICAL CORTISOL EXPRESS ELISA KIT (ITEM NO: 500370)
+
+
+rm(list = ls())
+
+# Change to your own working directory; I like to do it here to save time in the future. 
+setwd("C:/Users/////")
+
+
+# PACKAGES REQUIRED:
+library(readxl)
+library(tidyr)
+library(drc)
+library(runjags)
+library(writexl)
+
+
+# LOAD RAW DATA USING READXL REPOSITRY - CHANGING SHEET AS REQUIRED
+EXCEL <- read_excel("ELISA 9.xlsx", sheet = 1)
+
+
+# REMOVE NON-IMPORTANT INFORMATION FROM SHEET BY SUBSETTING
+EXCEL <- EXCEL[c(10:17), c(2:13)]
+
+
+# USING TIDYR, CONVERT WIDE DATA INTO LONG FORMAT - USE "SLOWEST" TO GROUP BY
+# COLUMNS AS OPPOSED TO ROWS.
+colnames(EXCEL) <- c("1":"12")
+
+LONG <- 
+  EXCEL |> 
+  pivot_longer(cols = "1":"12",
+               cols_vary = "slowest")
+
+
+# REMOVE UNECESSARY VARIABLES/COLUMNS.
+LONG <- LONG[c(-1)]
+
+
+# ADD WELL NUMBERS TO ALLOW FOR EASIER/STANDARDISED GROUPING.
+LONG$Well <- c("1":"96")
+
+
+# CALCULATE YOUR MAXIMUM & NON-SPECIFIC BINDING AVERAGES
+NSB <- LONG[c(3:4), c(1)]     #              HERE THE FIRST C(X:X) REFERS TO ROW
+B0 <- LONG[c(5:6), c(1)]      #              AND THE SECOND TO COLUMN.
+
+NSB <- mean(NSB$value)
+B0 <- mean(B0$value)
+
+MAXBIND <- B0 - NSB
+
+#    ______________________
+#   | STANDARD PREPERATION |
+
+# SUBSET STANDADS AND REMOVE NSB 
+STANDARDS <- LONG[c(7:22), c(1:2)]
+
+STANDARDS <- STANDARDS$value - NSB
+STANDARDS <- as.data.frame(STANDARDS)
+
+
+# CALCULATE PERCENTAGE BINDING (STANDARD OD / MAXBIND)
+STANDARDS <- STANDARDS$STANDARDS / MAXBIND
+STANDARDS <- as.data.frame(STANDARDS)
+
+
+# ADD KNOWN CONCENTRATIONS AND STANDARD NUMBERS (TO CHECK ORDER). 
+STANDARDS$CONC <- c("5000", "5000", "2500", "2500", "1240", "1240", "625", "625",
+                    "312.5", "312.5", "156.3", "156.3", "78.1", "78.1", "39.1", "39.1")
+STANDARDS$STANDARD <- c("S1", "S1", "S2", "S2", "S3", "S3", "S4", "S4",
+                        "S5", "S5", "S6", "S6", "S7", "S7", "S8", "S8")
+
+names(STANDARDS)[names(STANDARDS) == "STANDARDS"] <- "X.B.B0"
+
+
+# CHANGE ADDED CONCENTRATIONS TO NUMERICAL VALUES (ENTERED AS CHARACTERS)
+STANDARDS$CONC <- as.numeric(STANDARDS$CONC)
+
+
+# USING DRC GENERATE A FOUR PARAMETER FIT MODEL TO CREATE STANDARD CURVE
+CURVE <- drm(X.B.B0 ~ CONC, 
+                 fct = LL.4(names = c("Slope", "Lower", "Upper", "ED50")),
+                 data = STANDARDS)
+plot(CURVE)
+
+#    ______________________
+#   |  SAMPLE PREPERATION  |
+
+
+# SUBSET SAMPLES - AGAIN FIRST c(X:X) refers to row, second to columns. 
+SAMPLES <- LONG[c(23:96), c(1:2)]
+
+
+# SUBTRACT NSB FROM SAMPLES
+SAMPLES <- SAMPLES$value - NSB
+SAMPLES <- as.data.frame(SAMPLES)
+
+
+# ADD WELL LAYOUT - STARTING AT FIRST SAMPLE
+SAMPLES$Well <- c("23":"96")
+
+SAMPLES$X.B.B0 <- SAMPLES$SAMPLES / MAXBIND
+
+#    ______________________
+#   |  DATA EXTRAPOLATION  |
+
+
+# EXTRAPOLATE DATA USING GENERATED DATA SHEETS
+DATA <- ED(CURVE, SAMPLES$X.B.B0, type = "absolute" , display = F)
+
+#    ______________________
+#   |   FORMATTING  DATA   |
+
+
+# CHANGE LIST TO DATA FRAME - REMOVE STD. ERROR IF WISHED
+DATA <- as.data.frame(DATA)
+DATA <- DATA[c(-2)]       # STD. ERROR
+
+
+# ADD WELL NUMBERING
+DATA$Well <- c("23":"96")
+
+
+# REMOVE ROW NAMES
+row.names(DATA) <- NULL
+
+#    ______________________
+#   |    EXPORTING DATA    |
+
+
+# CHANGE WORKING DIRECTORY TO AVOID CONFUSION
+setwd("C:/Users/////")
+
+
+# USE "RUNJAGS" "new_unique()" COMMAND TO AUTOMATICALLY ASSIGN FILENAME.
+filename <- paste0(new_unique(
+  name = "ELISA",
+  suffix = ".xlsx",
+  ask = FALSE,
+  prompt = "A file or directory with this name already exists.  Overwrite?",
+  touch = FALSE,
+  type = "file"
+))
+
+
+# USEING "WRITEXL" DATA CAN BE WRITTEN TO EXCEL WORKBOOKS
+# DATA SHOULD BE IN THE ORDER IT WAS ENTERED (WELLS 1-96, ETC.)
+write_xlsx(DATA, filename)
